@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Tower Defense</title>
+<title>Tower Defense v1.5</title>
 <style>
   :root {
     --bg: #080d0b;
@@ -15,19 +15,21 @@
     --bad: #f06a6a;
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; background: #080d0b; }
   /* A normal scrolling document. No locked height, no fixed shell: that is
-     what made taps shift the page around in other apps. */
+     what made taps shift the page around in other apps. There is also no
+     min-height on purpose: a forced viewport height that the app's own
+     toolbar does not count leaves dead space the browser can scroll into,
+     which slides the top row of the game up under the header. */
   body {
     margin: 0;
-    min-height: 100dvh;
     overflow-x: hidden;
     background: radial-gradient(circle at 50% -10%, #14261d 0%, #080d0b 65%);
     color: var(--text);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     display: flex;
     justify-content: center;
-    padding: 14px;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 14px calc(14px + env(safe-area-inset-bottom, 0px));
     touch-action: manipulation;
     overscroll-behavior: none;
     -webkit-user-select: none;
@@ -105,6 +107,7 @@
   .selection span { font-size: 12px; color: var(--muted); }
 
   .tips { font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .ver { color: var(--gold); white-space: nowrap; }
   .tips kbd {
     background: #16241c;
     border: 1px solid var(--line);
@@ -198,6 +201,8 @@
     &nbsp;·&nbsp; <kbd>Space</kbd> pause
     &nbsp;·&nbsp; <kbd>F</kbd> speed
     &nbsp;·&nbsp; <kbd>Esc</kbd> cancel
+    <br /><span class="ver" id="ver">v1.5</span> — if this is not the version you
+    expected, download the file again.
   </div>
 
 </div>
@@ -209,6 +214,8 @@
   /* ------------------------------------------------------------------ *
    * Board geometry
    * ------------------------------------------------------------------ */
+
+  var VERSION = "1.5";
 
   var TILE = 40, COLS = 24, ROWS = 15;
   var W = COLS * TILE, H = ROWS * TILE;
@@ -1272,6 +1279,17 @@
       state.buildType = null;
     }
   };
+
+  // The version is shown in the page and in the title bar, so it is obvious
+  // whether the phone is running the file that was just sent.
+  document.title = "Tower Defense v" + VERSION;
+  var verEl = document.getElementById("ver");
+  if (verEl) verEl.textContent = "v" + VERSION;
+
+  // Start at the very top, and never leave a stray scroll behind.
+  window.scrollTo(0, 0);
+  document.addEventListener("load", function () { window.scrollTo(0, 0); });
+  window.addEventListener("pageshow", function () { window.scrollTo(0, 0); });
 
   resetGame();
   requestAnimationFrame(frame);
