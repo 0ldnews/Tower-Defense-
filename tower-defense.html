@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Tower Defense</title>
 <style>
   :root {
@@ -15,33 +15,47 @@
     --bad: #f06a6a;
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  /* A normal scrolling document. No locked height, no fixed shell: that is
+     what made taps shift the page around in other apps. */
   body {
     margin: 0;
-    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: hidden;
     background: radial-gradient(circle at 50% -10%, #14261d 0%, #080d0b 65%);
     color: var(--text);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     display: flex;
     justify-content: center;
     padding: 14px;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
   .wrap { width: 100%; max-width: 980px; display: flex; flex-direction: column; gap: 10px; }
 
-  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
-  .stats { display: flex; gap: 8px; flex-wrap: wrap; flex: 1 1 auto; }
+  /* Grid bars with text-independent column widths: the HUD label changes
+     every frame, and a flex row re-wrapped as the text grew, which changed
+     the document height and made the page jump. */
+  .bar { display: grid; gap: 8px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(74px, 1fr)); gap: 8px; }
   .stat {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 6px 10px;
-    min-width: 74px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
   }
   .stat span { display: block; font-size: 10px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
   .stat b { font-size: 17px; font-weight: 600; }
   #stat-gold { color: var(--gold); }
   #stat-lives { color: #7ee2a8; }
 
-  .controls { display: flex; gap: 8px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+  .controls button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 
   button {
     font: inherit;
@@ -77,6 +91,8 @@
   .card.active { border-color: var(--gold); background: #1d2b1f; box-shadow: 0 0 0 1px var(--gold) inset; }
   .card.poor .cost { color: var(--bad); }
 
+  .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+
   .selection {
     display: flex;
     gap: 8px;
@@ -84,7 +100,7 @@
     padding: 6px 8px;
     border: 1px dashed var(--line);
     border-radius: 8px;
-    margin-left: auto;
+    grid-column: 1 / -1;
   }
   .selection span { font-size: 12px; color: var(--muted); }
 
@@ -130,6 +146,10 @@
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
   .hidden { display: none !important; }
+
+  /* The selection row keeps its space when nothing is selected, so tapping a
+     tower cannot change the page height and move everything on screen. */
+  .selection.hidden { display: flex !important; visibility: hidden; }
 </style>
 </head>
 <body>
@@ -161,7 +181,7 @@
     </div>
   </div>
 
-  <div class="bar">
+  <div class="bar cards">
     <button class="card" data-type="arrow"><b>Archer</b><span class="cost">$50</span><small>fast, single target</small></button>
     <button class="card" data-type="cannon"><b>Cannon</b><span class="cost">$90</span><small>slow, splash damage</small></button>
     <button class="card" data-type="frost"><b>Frost</b><span class="cost">$70</span><small>chills enemies to a crawl</small></button>
@@ -1148,6 +1168,62 @@
   upgradeBtn.addEventListener("click", upgradeSelected);
   sellBtn.addEventListener("click", sellSelected);
   restartBtn.addEventListener("click", resetGame);
+
+  /* This browser slides its toolbars on every touch, which moves the page up
+     and down. Handling the tap ourselves and cancelling the browser's own
+     handling stops that. Any real click the browser still sends afterwards is
+     swallowed, so a tap never fires an action twice. */
+  var TAP_TARGETS = "button, canvas, [data-tap]";
+  var tapStart = null;
+  var tapHandledAt = 0;
+
+  document.addEventListener("touchstart", function (evt) {
+    tapStart = evt.touches.length === 1
+      ? { x: evt.touches[0].clientX, y: evt.touches[0].clientY }
+      : null;
+  }, { passive: true });
+
+  document.addEventListener("touchend", function (evt) {
+    var start = tapStart;
+    tapStart = null;
+    if (!start || !evt.changedTouches || !evt.changedTouches[0]) return;
+    if (evt.target && evt.target.closest && evt.target.closest("input, textarea")) return;
+    var t = evt.changedTouches[0];
+    if (Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10) return;
+    if (evt.cancelable) evt.preventDefault();
+
+    var el = document.elementFromPoint(t.clientX, t.clientY);
+    var target = el && el.closest ? el.closest(TAP_TARGETS) : null;
+    if (!target || target.disabled) return;
+
+    tapHandledAt = Date.now();
+    var click = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      clientX: t.clientX,
+      clientY: t.clientY
+    });
+    click.tdSynthetic = true;
+    target.dispatchEvent(click);
+  }, { passive: false });
+
+  // Drop the browser's own click after a tap we already handled.
+  document.addEventListener("click", function (evt) {
+    if (evt.tdSynthetic) return;
+    if (Date.now() - tapHandledAt < 400) {
+      evt.stopPropagation();
+      evt.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener("contextmenu", function (evt) {
+    if (!(evt.target.closest && evt.target.closest("input, textarea"))) evt.preventDefault();
+  });
+  document.addEventListener("gesturestart", function (evt) { evt.preventDefault(); }, { passive: false });
+  document.addEventListener("dblclick", function (evt) { evt.preventDefault(); }, { passive: false });
+  document.addEventListener("touchmove", function (evt) {
+    if (evt.touches && evt.touches.length > 1 && evt.cancelable) evt.preventDefault();
+  }, { passive: false });
 
   document.addEventListener("keydown", function (evt) {
     if (evt.key === " " || evt.code === "Space") {
