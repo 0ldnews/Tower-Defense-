@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Tower Defense v1.5</title>
+<title>Tower Defense v1.6</title>
 <style>
   :root {
     --bg: #080d0b;
@@ -94,6 +94,10 @@
   .card.poor .cost { color: var(--bad); }
 
   .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+
+  .maps { grid-template-columns: repeat(3, 1fr); }
+  .maps button { font-size: 12px; padding: 6px 8px; }
+  .maps button.active { border-color: var(--gold); color: var(--gold); background: #1d2b1f; }
 
   .selection {
     display: flex;
@@ -188,6 +192,8 @@
     <button class="card" data-type="arrow"><b>Archer</b><span class="cost">$50</span><small>fast, single target</small></button>
     <button class="card" data-type="cannon"><b>Cannon</b><span class="cost">$90</span><small>slow, splash damage</small></button>
     <button class="card" data-type="frost"><b>Frost</b><span class="cost">$70</span><small>chills enemies to a crawl</small></button>
+    <button class="card" data-type="sniper"><b>Sniper</b><span class="cost">$120</span><small>huge range, one heavy shot</small></button>
+    <button class="card" data-type="tesla"><b>Tesla</b><span class="cost">$150</span><small>chain lightning, hits three</small></button>
     <div id="selection" class="selection hidden">
       <span id="sel-name"></span>
       <button id="btn-upgrade">Upgrade</button>
@@ -195,13 +201,19 @@
     </div>
   </div>
 
+  <div class="bar maps" id="maps">
+    <button data-map="0">Greenway</button>
+    <button data-map="1">Gauntlet</button>
+    <button data-map="2">Split</button>
+  </div>
+
   <div class="tips">
     Pick a tower, then click a grass tile to build it. Click a tower to upgrade or sell it.
-    &nbsp;·&nbsp; <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick tower
+    &nbsp;·&nbsp; <kbd>1</kbd>–<kbd>5</kbd> pick tower
     &nbsp;·&nbsp; <kbd>Space</kbd> pause
     &nbsp;·&nbsp; <kbd>F</kbd> speed
     &nbsp;·&nbsp; <kbd>Esc</kbd> cancel
-    <br /><span class="ver" id="ver">v1.5</span> — if this is not the version you
+    <br /><span class="ver" id="ver">v1.6</span> — if this is not the version you
     expected, download the file again.
   </div>
 
@@ -215,28 +227,74 @@
    * Board geometry
    * ------------------------------------------------------------------ */
 
-  var VERSION = "1.5";
+  var VERSION = "1.6";
 
   var TILE = 40, COLS = 24, ROWS = 15;
   var W = COLS * TILE, H = ROWS * TILE;
 
-  // Waypoints in tile coordinates. First one sits off the left edge,
-  // last one is where the base stands.
-  var PATH_TILES = [
-    [-1, 3], [5, 3], [5, 11], [12, 11], [12, 5], [19, 5], [19, 12], [22, 12]
+  // Waypoints in tile coordinates. The first one sits off the left edge, the
+  // last one is where the base stands. Longer roads are easier: there is more
+  // time to shoot at whatever is walking them.
+  var MAPS = [
+    {
+      name: "Greenway",
+      note: "the long way round",
+      path: [[-1, 3], [5, 3], [5, 11], [12, 11], [12, 5], [19, 5], [19, 12], [22, 12]]
+    },
+    {
+      name: "Gauntlet",
+      note: "switchbacks, plenty of corners",
+      path: [[-1, 2], [4, 2], [4, 7], [9, 7], [9, 2], [14, 2], [14, 12], [19, 12], [19, 6], [22, 6]]
+    },
+    {
+      name: "Split",
+      note: "short road, less time to shoot",
+      path: [[-1, 7], [7, 7], [7, 13], [14, 13], [14, 4], [20, 4], [20, 8], [22, 8]]
+    }
   ];
 
-  var waypoints = PATH_TILES.map(function (t) {
-    return { x: t[0] * TILE + TILE / 2, y: t[1] * TILE + TILE / 2 };
-  });
-
+  var mapIndex = 0;
+  var waypoints = [];
   var segments = [];
   var pathLength = 0;
-  for (var i = 0; i < waypoints.length - 1; i++) {
-    var a = waypoints[i], b = waypoints[i + 1];
-    var len = Math.hypot(b.x - a.x, b.y - a.y);
-    segments.push({ a: a, b: b, len: len, start: pathLength });
-    pathLength += len;
+  var BLOCKED = new Set();
+  var deco = [];
+
+  function tileKey(col, row) { return col + "," + row; }
+
+  // Rebuilds the road for the current map: waypoints, segments, the blocked
+  // tiles, and the grass speckle.
+  function buildMapGeometry() {
+    var path = MAPS[mapIndex].path;
+
+    waypoints = path.map(function (t) {
+      return { x: t[0] * TILE + TILE / 2, y: t[1] * TILE + TILE / 2 };
+    });
+
+    segments = [];
+    pathLength = 0;
+    for (var i = 0; i < waypoints.length - 1; i++) {
+      var a = waypoints[i], b = waypoints[i + 1];
+      var len = Math.hypot(b.x - a.x, b.y - a.y);
+      segments.push({ a: a, b: b, len: len, start: pathLength });
+      pathLength += len;
+    }
+
+    // Every tile the road runs through is unbuildable.
+    BLOCKED = new Set();
+    for (var p = 0; p < path.length - 1; p++) {
+      var c0 = path[p][0], r0 = path[p][1];
+      var c1 = path[p + 1][0], r1 = path[p + 1][1];
+      var dc = Math.sign(c1 - c0), dr = Math.sign(r1 - r0);
+      var cc = c0, rr = r0;
+      BLOCKED.add(tileKey(cc, rr));
+      while (cc !== c1 || rr !== r1) {
+        cc += dc; rr += dr;
+        BLOCKED.add(tileKey(cc, rr));
+      }
+    }
+
+    buildDeco();
   }
 
   function pointOnPath(distance) {
@@ -251,20 +309,7 @@
     return { x: waypoints[waypoints.length - 1].x, y: waypoints[waypoints.length - 1].y };
   }
 
-  // Every tile the road runs through is unbuildable.
-  var BLOCKED = new Set();
-  function tileKey(col, row) { return col + "," + row; }
-  for (var p = 0; p < PATH_TILES.length - 1; p++) {
-    var c0 = PATH_TILES[p][0], r0 = PATH_TILES[p][1];
-    var c1 = PATH_TILES[p + 1][0], r1 = PATH_TILES[p + 1][1];
-    var dc = Math.sign(c1 - c0), dr = Math.sign(r1 - r0);
-    var cc = c0, rr = r0;
-    BLOCKED.add(tileKey(cc, rr));
-    while (cc !== c1 || rr !== r1) {
-      cc += dc; rr += dr;
-      BLOCKED.add(tileKey(cc, rr));
-    }
-  }
+  // buildMapGeometry() above fills BLOCKED for the map that is loaded.
 
   /* ------------------------------------------------------------------ *
    * Content definitions
@@ -282,6 +327,17 @@
     frost: {
       name: "Frost", cost: 70, damage: 4, range: 112, rate: 0.65,
       projSpeed: 430, slow: 0.45, slowTime: 1.7, color: "#9ce6ff", projectile: "#d7f6ff"
+    },
+    sniper: {
+      name: "Sniper", cost: 120, damage: 58, range: 300, rate: 1.5,
+      projSpeed: 1000, color: "#d9e8b0", projectile: "#f1ffd0"
+    },
+    // Tesla does not launch a projectile: it zaps its target and arcs on to
+    // the nearest neighbours, losing a little power with every jump.
+    tesla: {
+      name: "Tesla", cost: 150, damage: 24, range: 128, rate: 0.9,
+      chain: 2, chainRange: 96, chainFalloff: 0.75,
+      color: "#c9a6ff", projectile: "#e2ccff"
     }
   };
 
@@ -292,13 +348,17 @@
     boss:   { name: "Boss",   hp: 900, speed: 32,  gold: 65, leak: 6,  radius: 17, color: "#ff8a3d" }
   };
 
-  var TOTAL_WAVES = 15;
+  var TOTAL_WAVES = 20;
   var MAX_LEVEL = 3;
   var START_GOLD = 200;
   // Each wave is given a total hit-point budget instead of a flat multiplier.
   // The budget climbs at a steady rate, so no single wave spikes into a wall.
   var WAVE_BASE_HP = 220;
   var WAVE_HP_GROWTH = 1.5;
+  // Past this wave the budget keeps climbing, but at a gentler rate, so the
+  // last five waves are a hard finish instead of an impossible wall.
+  var WAVE_GROWTH_CAP = 15;
+  var WAVE_LATE_GROWTH = 1.15;
   var START_LIVES = 20;
   var FIRST_WAVE_DELAY = 15;
   var BETWEEN_WAVE_DELAY = 10;
@@ -320,6 +380,7 @@
     towers: [],
     projectiles: [],
     particles: [],
+    zaps: [],
     buildType: null,
     selectedTower: null,
     hover: null,                // { col, row } under the mouse
@@ -356,6 +417,7 @@
   var restartBtn = document.getElementById("btn-restart");
   var toastEl = document.getElementById("toast");
   var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
+  var mapBtns = Array.prototype.slice.call(document.querySelectorAll("#maps button"));
 
   /* ------------------------------------------------------------------ *
    * Helpers
@@ -372,6 +434,9 @@
       splash: def.splash ? def.splash * Math.pow(1.15, k) : 0,
       slow: def.slow || 0,
       slowTime: def.slowTime || 0,
+      chain: def.chain || 0,
+      chainRange: def.chainRange || 0,
+      chainFalloff: def.chainFalloff || 1,
       upgradeCost: Math.round(def.cost * 0.9 * Math.pow(1.6, k)),
       sellValue: Math.round(tower.invested * 0.65)
     };
@@ -421,7 +486,9 @@
    * ------------------------------------------------------------------ */
 
   function waveTargetHp(n) {
-    return WAVE_BASE_HP * Math.pow(WAVE_HP_GROWTH, n - 1);
+    var early = Math.min(n, WAVE_GROWTH_CAP);
+    var late = Math.max(0, n - WAVE_GROWTH_CAP);
+    return WAVE_BASE_HP * Math.pow(WAVE_HP_GROWTH, early - 1) * Math.pow(WAVE_LATE_GROWTH, late);
   }
 
   function buildWave(n) {
@@ -578,6 +645,11 @@
     tower.cooldown = stats.rate;
     tower.recoil = 1;
 
+    if (tower.type === "tesla") {
+      fireTesla(tower, stats, target);
+      return;
+    }
+
     state.projectiles.push({
       x: tower.x,
       y: tower.y,
@@ -592,6 +664,43 @@
       color: TOWER_TYPES[tower.type].projectile,
       radius: tower.type === "cannon" ? 5 : 3
     });
+  }
+
+  // Zap the first target, then the closest enemies to each one in turn.
+  function fireTesla(tower, stats, first) {
+    var hit = [first];
+    var current = first;
+    var points = [{ x: tower.x, y: tower.y }, { x: first.x, y: first.y }];
+    var damage = stats.damage;
+
+    for (var jump = 0; jump < stats.chain; jump++) {
+      var next = null;
+      var best = stats.chainRange * stats.chainRange;
+      for (var i = 0; i < state.enemies.length; i++) {
+        var e = state.enemies[i];
+        if (!e.alive || hit.indexOf(e) !== -1) continue;
+        var dx = e.x - current.x, dy = e.y - current.y;
+        var d2 = dx * dx + dy * dy;
+        if (d2 < best) { best = d2; next = e; }
+      }
+      if (!next) break;
+      hit.push(next);
+      points.push({ x: next.x, y: next.y });
+      current = next;
+    }
+
+    for (var h = 0; h < hit.length; h++) {
+      damageEnemy(hit[h], damage);
+      damage *= stats.chainFalloff;
+    }
+
+    state.zaps.push({ points: points, life: 0.16, max: 0.16 });
+    burst(first.x, first.y, "#e2ccff", 4, 70);
+  }
+
+  function updateZaps(dt) {
+    for (var i = 0; i < state.zaps.length; i++) state.zaps[i].life -= dt;
+    state.zaps = state.zaps.filter(function (z) { return z.life > 0; });
   }
 
   function resolveHit(p) {
@@ -667,6 +776,7 @@
     for (var j = 0; j < state.towers.length; j++) updateTower(state.towers[j], dt);
     updateProjectiles(dt);
     updateParticles(dt);
+    updateZaps(dt);
     state.enemies = state.enemies.filter(function (e) { return e.alive && !e.reached; });
   }
 
@@ -674,12 +784,12 @@
    * Rendering
    * ------------------------------------------------------------------ */
 
-  var deco = [];
-  (function buildDeco() {
+  function buildDeco() {
+    deco = [];
     for (var r = 0; r < ROWS; r++) {
       for (var c = 0; c < COLS; c++) {
         if (BLOCKED.has(tileKey(c, r))) continue;
-        var n = Math.abs(Math.sin(c * 12.9898 + r * 78.233) * 43758.5453) % 1;
+        var n = Math.abs(Math.sin((c + mapIndex * 9) * 12.9898 + r * 78.233) * 43758.5453) % 1;
         if (n > 0.7) {
           deco.push({
             x: c * TILE + 6 + n * 24,
@@ -689,7 +799,7 @@
         }
       }
     }
-  })();
+  }
 
   function tracePath() {
     ctx.beginPath();
@@ -838,7 +948,7 @@
       ctx.beginPath();
       ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
       ctx.fill();
-    } else {
+    } else if (tower.type === "frost") {
       ctx.fillStyle = def.color;
       ctx.beginPath();
       ctx.moveTo(15 - kick, 0);
@@ -855,6 +965,37 @@
       ctx.moveTo(4, -5);
       ctx.lineTo(-4, 5);
       ctx.stroke();
+    } else if (tower.type === "sniper") {
+      ctx.fillStyle = def.color;
+      ctx.fillRect(4 - kick, -1.5, 24, 3);
+      ctx.fillStyle = "#5d6b3d";
+      ctx.fillRect(11 - kick, -4, 5, 8);
+      ctx.fillStyle = def.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2c3a22";
+      ctx.beginPath();
+      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f5c76b";
+      ctx.fillRect(-1.5, -13, 3, 5);
+    } else {
+      ctx.fillStyle = def.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#f2e9ff";
+      ctx.lineWidth = 1.5;
+      for (var ring = 1; ring <= 3; ring++) {
+        ctx.beginPath();
+        ctx.arc(0, 0, 2 + ring * 2.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#5a3f8a";
+      ctx.beginPath();
+      ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
 
@@ -916,6 +1057,25 @@
     }
   }
 
+  function drawZaps() {
+    for (var i = 0; i < state.zaps.length; i++) {
+      var z = state.zaps[i];
+      ctx.globalAlpha = Math.max(0, z.life / z.max);
+      ctx.strokeStyle = "#e2ccff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var p = 0; p < z.points.length - 1; p++) {
+        var a = z.points[p], b = z.points[p + 1];
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo((a.x + b.x) / 2 + (Math.random() - 0.5) * 16,
+                   (a.y + b.y) / 2 + (Math.random() - 0.5) * 16);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawParticles() {
     for (var i = 0; i < state.particles.length; i++) {
       var p = state.particles[i];
@@ -960,6 +1120,7 @@
     drawTowers();
     drawEnemies();
     drawProjectiles();
+    drawZaps();
     drawParticles();
     drawPlacement();
   }
@@ -1088,6 +1249,7 @@
     state.towers = [];
     state.projectiles = [];
     state.particles = [];
+    state.zaps = [];
     state.buildType = null;
     state.selectedTower = null;
     state.waveActive = false;
@@ -1168,9 +1330,29 @@
   });
 
   speedBtn.addEventListener("click", function () {
-    state.speed = state.speed === 1 ? 2 : 1;
+    state.speed = state.speed >= 3 ? 1 : state.speed + 1;
     speedBtn.textContent = state.speed + "\u00d7";
   });
+
+  function updateMapButtons() {
+    for (var i = 0; i < mapBtns.length; i++) {
+      mapBtns[i].classList.toggle("active", Number(mapBtns[i].dataset.map) === mapIndex);
+    }
+  }
+
+  function loadMap(index) {
+    mapIndex = Math.max(0, Math.min(MAPS.length - 1, index));
+    buildMapGeometry();
+    resetGame();
+    updateMapButtons();
+    toast(MAPS[mapIndex].name + " — " + MAPS[mapIndex].note);
+  }
+
+  for (var mi = 0; mi < mapBtns.length; mi++) {
+    mapBtns[mi].addEventListener("click", function () {
+      loadMap(Number(this.dataset.map));
+    });
+  }
 
   upgradeBtn.addEventListener("click", upgradeSelected);
   sellBtn.addEventListener("click", sellSelected);
@@ -1242,6 +1424,8 @@
     if (k === "1") { state.buildType = "arrow"; state.selectedTower = null; updateHud(); }
     else if (k === "2") { state.buildType = "cannon"; state.selectedTower = null; updateHud(); }
     else if (k === "3") { state.buildType = "frost"; state.selectedTower = null; updateHud(); }
+    else if (k === "4") { state.buildType = "sniper"; state.selectedTower = null; updateHud(); }
+    else if (k === "5") { state.buildType = "tesla"; state.selectedTower = null; updateHud(); }
     else if (k === "f") speedBtn.click();
     else if (k === "escape") { state.buildType = null; state.selectedTower = null; updateHud(); }
     else if (k === "u") upgradeSelected();
@@ -1273,6 +1457,7 @@
     state: state,
     tick: update,
     startWave: startWave,
+    loadMap: loadMap,
     place: function (col, row, type) {
       state.buildType = type;
       tryBuild(col, row);
@@ -1291,7 +1476,7 @@
   document.addEventListener("load", function () { window.scrollTo(0, 0); });
   window.addEventListener("pageshow", function () { window.scrollTo(0, 0); });
 
-  resetGame();
+  loadMap(0);
   requestAnimationFrame(frame);
 })();
 </script>
