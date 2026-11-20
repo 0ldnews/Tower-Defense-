@@ -261,13 +261,17 @@
   var ENEMY_TYPES = {
     grunt:  { name: "Grunt",  hp: 42,  speed: 58,  gold: 6,  leak: 1,  radius: 9,  color: "#f06a6a" },
     runner: { name: "Runner", hp: 28,  speed: 105, gold: 7,  leak: 1,  radius: 7,  color: "#f5d76e" },
-    tank:   { name: "Tank",   hp: 190, speed: 38,  gold: 15, leak: 3,  radius: 12, color: "#a78bfa" },
-    boss:   { name: "Boss",   hp: 900, speed: 32,  gold: 65, leak: 10, radius: 17, color: "#ff8a3d" }
+    tank:   { name: "Tank",   hp: 190, speed: 38,  gold: 15, leak: 2,  radius: 12, color: "#a78bfa" },
+    boss:   { name: "Boss",   hp: 900, speed: 32,  gold: 65, leak: 6,  radius: 17, color: "#ff8a3d" }
   };
 
   var TOTAL_WAVES = 15;
   var MAX_LEVEL = 3;
   var START_GOLD = 200;
+  // Each wave is given a total hit-point budget instead of a flat multiplier.
+  // The budget climbs at a steady rate, so no single wave spikes into a wall.
+  var WAVE_BASE_HP = 220;
+  var WAVE_HP_GROWTH = 1.5;
   var START_LIVES = 20;
   var FIRST_WAVE_DELAY = 15;
   var BETWEEN_WAVE_DELAY = 10;
@@ -389,6 +393,10 @@
    * Waves
    * ------------------------------------------------------------------ */
 
+  function waveTargetHp(n) {
+    return WAVE_BASE_HP * Math.pow(WAVE_HP_GROWTH, n - 1);
+  }
+
   function buildWave(n) {
     var list = [];
     var t = 0;
@@ -398,14 +406,21 @@
         t += gap;
       }
     }
-    add("grunt", 5 + Math.floor(n * 1.3), 0.62);
-    if (n >= 2) { t += 1.0; add("runner", 2 + Math.floor(n * 0.7), 0.4); }
-    if (n >= 4) { t += 1.2; add("tank", 1 + Math.floor((n - 3) / 2), 1.1); }
-    if (n % 5 === 0) { t += 1.5; add("boss", Math.floor(n / 5), 2.2); }
+
+    add("grunt", 5 + Math.floor(n * 1.1), 0.62);
+    if (n >= 3) { t += 1.0; add("runner", 2 + Math.floor(n * 0.55), 0.4); }
+    if (n >= 6) { t += 1.2; add("tank", 1 + Math.floor((n - 6) / 3), 1.2); }
+    if (n % 5 === 0) { t += 1.5; add("boss", 1, 2.2); }
+
+    // Scale the mix to the wave's hit-point budget. Counts stay readable,
+    // the multiplier absorbs the budget so the curve stays smooth.
+    var baseHp = 0;
+    for (var i = 0; i < list.length; i++) baseHp += ENEMY_TYPES[list[i].type].hp;
+
     return {
       list: list,
-      hpMul: 1 + (n - 1) * 0.2,
-      speedMul: 1 + (n - 1) * 0.02
+      hpMul: waveTargetHp(n) / baseHp,
+      speedMul: 1 + (n - 1) * 0.018
     };
   }
 
@@ -747,20 +762,18 @@
 
   function drawTower(tower) {
     var def = TOWER_TYPES[tower.type];
-    var stats = towerStats(tower);
     var selected = state.selectedTower === tower;
 
-    if (selected || state.hover === null) {
-      // range ring only for the selected tower
-      if (selected) {
-        ctx.fillStyle = "rgba(245,199,107,0.07)";
-        ctx.beginPath();
-        ctx.arc(tower.x, tower.y, stats.range, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(245,199,107,0.35)";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
+    // range ring, only for the selected tower
+    if (selected) {
+      var stats = towerStats(tower);
+      ctx.fillStyle = "rgba(245,199,107,0.07)";
+      ctx.beginPath();
+      ctx.arc(tower.x, tower.y, stats.range, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(245,199,107,0.35)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     }
 
     // stone pad
